@@ -1,0 +1,125 @@
+@page "/yedek"
+@inject BackupService Backups
+@inject IFileService Files
+@inject ISnackbar Snackbar
+
+<MudText Typo="Typo.h5" Class="mb-3">Yedek</MudText>
+
+<MudPaper Class="pa-4 mb-4" Elevation="1" Style="max-width: 32rem">
+    <MudStack Spacing="3">
+        <MudText>Tüm günleri ve havale kayıtlarını tek dosyaya aktarın; başka cihazda içe aktararak devam edin. E-posta ayarları ve alıcılar yedeğe girmez.</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="DisaAktar">Dışa Aktar</MudButton>
+        <MudButton Variant="Variant.Outlined" OnClick="IceAktar">İçe Aktar</MudButton>
+    </MudStack>
+</MudPaper>
+
+@if (_plan is not null)
+{
+    <MudPaper Class="pa-4" Elevation="1" Style="max-width: 40rem">
+        <MudStack Spacing="2">
+            <MudText>Eklenecek yeni gün: <b>@_plan.ToAdd.Count</b> · Çakışan gün: <b>@_secimler.Count</b></MudText>
+
+            @foreach (var s in _secimler)
+            {
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudText><b>@TrFormat.Tarih(s.Cakisma.Local.Tarih)</b></MudText>
+                    <MudText Typo="Typo.body2">Cihazda: nakit @Fmt.Tutar(s.Cakisma.Local.Nakit), kart @Fmt.Tutar(s.Cakisma.Local.KrediKarti), havale @Fmt.Tutar(s.Cakisma.Local.HavaleToplam)</MudText>
+                    <MudText Typo="Typo.body2" Style="opacity:.8">Cihazdaki havaleler: @HavaleOzet(s.Cakisma.Local)</MudText>
+                    <MudText Typo="Typo.body2">Dosyada: nakit @Fmt.Tutar(s.Cakisma.Imported.Nakit), kart @Fmt.Tutar(s.Cakisma.Imported.KrediKarti), havale @Fmt.Tutar(s.Cakisma.Imported.HavaleToplam)</MudText>
+                    <MudText Typo="Typo.body2" Style="opacity:.8">Dosyadaki havaleler: @HavaleOzet(s.Cakisma.Imported)</MudText>
+                    <MudRadioGroup T="bool" @bind-Value="s.DosyadakiniKullan">
+                        <MudRadio T="bool" Value="false">Cihazdakini koru</MudRadio>
+                        <MudRadio T="bool" Value="true">Dosyadakini kullan</MudRadio>
+                    </MudRadioGroup>
+                </MudPaper>
+            }
+
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Uygula">Uygula</MudButton>
+                <MudButton OnClick="Vazgec">Vazgeç</MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private sealed class Secim(ImportConflict cakisma)
+    {
+        public ImportConflict Cakisma { get; } = cakisma;
+        public bool DosyadakiniKullan { get; set; }
+    }
+
+    private static string HavaleOzet(CiroDay gun) =>
+        gun.Havaleler.Count == 0 ? "yok" : string.Join("; ", gun.Havaleler.Select(h => $"{h.KisiAdi} {Fmt.Tutar(h.Tutar)}"));
+
+    private ImportPlan? _plan;
+    private List<Secim> _secimler = [];
+
+    private async Task DisaAktar()
+    {
+        try
+        {
+            var veri = await Backups.ExportAsync();
+            var yol = await Files.SaveAsync($"Ciro Yedek {DateTime.Today:yyyy-MM-dd}.json", veri);
+            if (yol is not null)
+            {
+                Snackbar.Add($"Yedek kaydedildi: {yol}", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Yedek alınamadı: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task IceAktar()
+    {
+        var veri = await Files.PickFileAsync();
+        if (veri is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _plan = await Backups.PlanImportAsync(veri);
+        }
+        catch (BackupFormatException)
+        {
+            _plan = null;
+            Snackbar.Add("Dosya okunamadı. Veriler değişmedi.", Severity.Error);
+            return;
+        }
+
+        _secimler = _plan.Conflicts.Select(c => new Secim(c)).ToList();
+        if (_plan.ToAdd.Count == 0 && _secimler.Count == 0)
+        {
+            Snackbar.Add("Dosyadaki tüm günler zaten cihazda var, değişiklik gerekmiyor.", Severity.Info);
+            _plan = null;
+        }
+    }
+
+    private async Task Uygula()
+    {
+        var secim = _secimler.ToDictionary(s => s.Cakisma, s => s.DosyadakiniKullan);
+        try
+        {
+            await Backups.ApplyImportAsync(_plan!, c => secim[c]);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"İçe aktarma tamamlanamadı: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add($"İçe aktarma tamamlandı ({_plan!.ToAdd.Count} yeni gün, {_secimler.Count(s => s.DosyadakiniKullan)} değiştirilen gün).", Severity.Success);
+        _plan = null;
+        _secimler = [];
+    }
+
+    private void Vazgec()
+    {
+        _plan = null;
+        _secimler = [];
+    }
+}

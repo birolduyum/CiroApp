@@ -1,0 +1,174 @@
+@page "/rapor"
+@inject DayService Days
+@inject ReportService Reports
+@inject EmailReportService EmailReports
+@inject IFileService Files
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<MudText Typo="Typo.h5" Class="mb-3">Rapor</MudText>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap" Spacing="2" Class="mb-2">
+    @* Dialog görünümü: takvim açılır pencerede tam görünür, dar ekranda da kesilmez. *@
+    <div style="width: 11rem">
+        <MudDatePicker Label="Başlangıç tarihi" @bind-Date="_baslangic" Culture="@Tr" PickerVariant="PickerVariant.Dialog"
+                       Editable="true" DateFormat="dd.MM.yyyy" Placeholder="gg.aa.yyyy" />
+    </div>
+    <div style="width: 11rem">
+        <MudDatePicker Label="Bitiş tarihi" @bind-Date="_bitis" Culture="@Tr" PickerVariant="PickerVariant.Dialog"
+                       Editable="true" DateFormat="dd.MM.yyyy" Placeholder="gg.aa.yyyy" />
+    </div>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!AralikGecerli || _mesgul)" OnClick="Sorgula">Sorgula</MudButton>
+    <MudButton Variant="Variant.Outlined" Disabled="@(!AralikGecerli || _mesgul)" OnClick="DosyayaKaydet">Dosyaya Kaydet</MudButton>
+    <MudButton Variant="Variant.Outlined" Disabled="@(!AralikGecerli || _mesgul)" OnClick="EpostaGonder">E-Posta Gönder</MudButton>
+    @if (Files.CanShare)
+    {
+        <MudButton Variant="Variant.Outlined" Disabled="@(!AralikGecerli || _mesgul)" OnClick="WhatsAppGonder">WhatsApp ile Gönder</MudButton>
+    }
+</MudStack>
+
+@if (!AralikGecerli)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">Başlangıç ve bitiş tarihini seçin; başlangıç bitişten sonra olamaz.</MudAlert>
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="mb-3">Dosya adı: @DosyaAdi</MudText>
+}
+
+@if (_sorgulananAralik is not null)
+{
+    <DayList Gunler="_gunler" BosMetin="Seçilen aralıkta kayıtlı gün yok." ToplamEtiketi="Toplam"
+             DonusUrl="@DonusUrl" OnSilindi="Yukle" />
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Tr = System.Globalization.CultureInfo.GetCultureInfo("tr-TR");
+    private const string UrlTarihBicimi = "yyyy-MM-dd";
+
+    private DateTime? _baslangic = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private DateTime? _bitis = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).AddMonths(1).AddDays(-1);
+    private bool _mesgul;
+    private ReportRange? _sorgulananAralik;
+    private IReadOnlyList<CiroDay> _gunler = [];
+
+    // Düzenleyiciden dönüşte aralık korunsun ve liste kendiliğinden yeniden gelsin.
+    [SupplyParameterFromQuery(Name = "bas")] public string? Bas { get; set; }
+    [SupplyParameterFromQuery(Name = "bit")] public string? Bit { get; set; }
+
+    private bool AralikGecerli => _baslangic is not null && _bitis is not null && _baslangic <= _bitis;
+
+    private ReportRange Aralik => new(DateOnly.FromDateTime(_baslangic!.Value), DateOnly.FromDateTime(_bitis!.Value));
+
+    private string DosyaAdi => ReportNaming.FileName(Aralik);
+
+    private string? DonusUrl => _sorgulananAralik is null ? null :
+        $"/rapor?bas={_sorgulananAralik.From.ToString(UrlTarihBicimi, System.Globalization.CultureInfo.InvariantCulture)}" +
+        $"&bit={_sorgulananAralik.To.ToString(UrlTarihBicimi, System.Globalization.CultureInfo.InvariantCulture)}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Bas is not null && Bit is not null
+            && DateTime.TryParseExact(Bas, UrlTarihBicimi, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var bas)
+            && DateTime.TryParseExact(Bit, UrlTarihBicimi, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var bit)
+            && bas <= bit)
+        {
+            (_baslangic, _bitis) = (bas, bit);
+            await Sorgula();
+        }
+    }
+
+    private async Task Sorgula()
+    {
+        await Calistir(async () =>
+        {
+            _sorgulananAralik = Aralik;
+            await Yukle();
+        });
+    }
+
+    private async Task Yukle()
+    {
+        if (_sorgulananAralik is not null)
+        {
+            _gunler = await Days.GetRangeAsync(_sorgulananAralik);
+        }
+    }
+
+    private async Task DosyayaKaydet()
+    {
+        await Calistir(async () =>
+        {
+            var dosya = await Reports.BuildAsync(Aralik);
+            var yol = await Files.SaveAsync(dosya.FileName, dosya.Content);
+            if (yol is null)
+            {
+                return;
+            }
+
+            Snackbar.Add($"Kaydedildi: {yol}", Severity.Success);
+            var ac = await Dialogs.ShowMessageBoxAsync(
+                "Dosya kaydedildi",
+                "Dosyayı şimdi açmak ister misiniz?",
+                yesText: "Evet",
+                noText: "Hayır");
+            if (ac == true)
+            {
+                await Files.OpenAsync(yol);
+            }
+        });
+    }
+
+    private async Task EpostaGonder()
+    {
+        var dialog = await Dialogs.ShowAsync<EmailDialog>("E-posta ile gönder", new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true });
+        var sonuc = await dialog.Result;
+        if (sonuc is null || sonuc.Canceled || sonuc.Data is not List<string> alicilar)
+        {
+            return;
+        }
+
+        await Calistir(async () =>
+        {
+            try
+            {
+                await EmailReports.SendAsync(Aralik, alicilar);
+                Snackbar.Add("E-posta gönderildi.", Severity.Success);
+            }
+            catch (EmailSettingsMissingException ex)
+            {
+                Snackbar.Add(ex.Message, Severity.Warning);
+            }
+            catch (EmailSendException ex)
+            {
+                Snackbar.Add(ex.Message, Severity.Error);
+            }
+        });
+    }
+
+    private async Task WhatsAppGonder()
+    {
+        await Calistir(async () =>
+        {
+            var dosya = await Reports.BuildAsync(Aralik);
+            await Files.ShareAsync(dosya.FileName, dosya.Content);
+        });
+    }
+
+    private async Task Calistir(Func<Task> is_)
+    {
+        _mesgul = true;
+        try
+        {
+            await is_();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"İşlem başarısız: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _mesgul = false;
+        }
+    }
+}

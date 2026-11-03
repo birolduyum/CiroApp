@@ -1,0 +1,108 @@
+@inject RecipientService Recipients
+
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            @if (_alicilar.Count == 0)
+            {
+                <MudText Typo="Typo.body2">Henüz kayıtlı alıcı yok. Aşağıdan bir adres ekleyin.</MudText>
+            }
+
+            @foreach (var a in _alicilar)
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                    <MudCheckBox T="bool" @bind-Value="a.Secili" Label="@a.Adres" />
+                    <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Size="Size.Small"
+                                   OnClick="() => AliciSil(a)" aria-label="@($"{a.Adres} adresini sil")" />
+                </MudStack>
+            }
+
+            <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                <MudTextField T="string" Label="Yeni adres" @bind-Value="_yeniAdres" Immediate="true"
+                              Error="@(_hata is not null)" ErrorText="@_hata" />
+                <MudButton OnClick="YeniEkle">Ekle</MudButton>
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Vazgec">Vazgeç</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!_alicilar.Any(a => a.Secili))" OnClick="Gonder">Gönder</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private sealed class Alici
+    {
+        public string Adres { get; init; } = "";
+        public bool Secili { get; set; }
+    }
+
+    private readonly List<Alici> _alicilar = [];
+    private string _yeniAdres = "";
+    private string? _hata;
+
+    protected override async Task OnInitializedAsync()
+    {
+        foreach (var adres in await Recipients.GetAllAsync())
+        {
+            _alicilar.Add(new Alici { Adres = adres });
+        }
+    }
+
+    // Kayıtlı alıcılardan kalıcı olarak da silinir; henüz kaydedilmemiş bir adres için depoda işlem olmaz.
+    private async Task AliciSil(Alici alici)
+    {
+        try
+        {
+            await Recipients.RemoveAsync(alici.Adres);
+        }
+        catch (Exception ex)
+        {
+            _hata = $"Adres silinemedi: {ex.Message}";
+            return;
+        }
+
+        _alicilar.Remove(alici);
+    }
+
+    private void YeniEkle()
+    {
+        if (!RecipientService.TryNormalize(_yeniAdres, out var adres))
+        {
+            _hata = "Geçerli bir e-posta adresi girin.";
+            return;
+        }
+
+        _hata = null;
+        var varOlan = _alicilar.FirstOrDefault(a => a.Adres.Equals(adres, StringComparison.OrdinalIgnoreCase));
+        if (varOlan is null)
+        {
+            _alicilar.Add(new Alici { Adres = adres, Secili = true });
+        }
+        else
+        {
+            varOlan.Secili = true;
+        }
+
+        _yeniAdres = "";
+    }
+
+    private void Gonder()
+    {
+        // Yazılıp "Ekle"ye basılmamış adres sessizce atlanmasın.
+        if (!string.IsNullOrWhiteSpace(_yeniAdres))
+        {
+            YeniEkle();
+            if (_hata is not null)
+            {
+                return;
+            }
+        }
+
+        MudDialog.Close(DialogResult.Ok(_alicilar.Where(a => a.Secili).Select(a => a.Adres).ToList()));
+    }
+
+    private void Vazgec() => MudDialog.Cancel();
+}

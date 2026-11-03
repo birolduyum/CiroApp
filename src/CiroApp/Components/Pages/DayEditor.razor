@@ -1,0 +1,226 @@
+@page "/gun/{Tarih}"
+@inject DayService Days
+@inject NavigationManager Nav
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+<NavigationLock OnBeforeInternalNavigation="CikisiDenetle" ConfirmExternalNavigation="true" />
+
+@if (_state is null)
+{
+    <MudProgressCircular Indeterminate="true" />
+}
+else
+{
+    <MudText Typo="Typo.h5" Class="mb-3">@TrFormat.Tarih(_state.Tarih) — @(_varOlan ? "Günü Düzenle" : "Yeni Gün")</MudText>
+
+    <MudPaper Class="pa-4" Elevation="1" Style="max-width: 32rem">
+        <MudStack Spacing="3">
+            <MudDatePicker Label="Tarih" Date="@_tarihSecimi" DateChanged="TarihDegisti" Culture="@Tr" PickerVariant="PickerVariant.Dialog"
+                           Editable="true" DateFormat="dd.MM.yyyy" Placeholder="gg.aa.yyyy" />
+            <MudTextField T="string" Label="Nakit" @bind-Value="NakitMetin" Immediate="true" Placeholder="0,00" ShrinkLabel="true"
+                          Error="@(_nakitHata is not null)" ErrorText="@_nakitHata"
+                          InputMode="@(MudBlazor.InputMode.@decimal)" Adornment="Adornment.End" AdornmentText="TL" />
+            <MudTextField T="string" Label="Kredi kartı" @bind-Value="KartMetin" Immediate="true" Placeholder="0,00" ShrinkLabel="true"
+                          Error="@(_kartHata is not null)" ErrorText="@_kartHata"
+                          InputMode="@(MudBlazor.InputMode.@decimal)" Adornment="Adornment.End" AdornmentText="TL" />
+
+            <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+                <MudText>Havale toplamı: <b>@Fmt.Tutar(_state.HavaleToplam)</b> TL (@_state.Havaleler.Count kayıt)</MudText>
+                <MudButton Variant="Variant.Outlined" OnClick="HavaleDuzenle">Düzenle</MudButton>
+            </MudStack>
+
+            <MudDivider />
+            <MudText Typo="Typo.h6">Günlük Toplam: @Fmt.Tutar(_state.GunlukToplam) TL</MudText>
+
+            @foreach (var hata in _hatalar)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true">@hata</MudAlert>
+            }
+
+            <MudStack Row="true" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Kaydet">Kaydet</MudButton>
+                <MudButton Variant="Variant.Text" OnClick="Iptal">İptal</MudButton>
+            </MudStack>
+        </MudStack>
+    </MudPaper>
+}
+
+@code {
+    private static readonly System.Globalization.CultureInfo Tr = System.Globalization.CultureInfo.GetCultureInfo("tr-TR");
+
+    [Parameter] public string Tarih { get; set; } = "";
+
+    // Listeden gelinen adres (ör. rapor sorgusu); yoksa düzenlenen günün ayındaki ana liste.
+    [SupplyParameterFromQuery(Name = "don")] public string? Don { get; set; }
+
+    private DateTime? _tarihSecimi;
+
+    private DayEditorState? _state;
+    private bool _varOlan;
+    // Boş alan 0 sayılır ve gri "0,00" ipucu görünür; yazmadan önce silmek/seçmek gerekmez.
+    private string _nakitMetin = "";
+    private string _kartMetin = "";
+
+    private static bool TutarOku(string? metin, out decimal tutar)
+    {
+        if (string.IsNullOrWhiteSpace(metin))
+        {
+            tutar = 0;
+            return true;
+        }
+
+        return TrFormat.TryParseTutar(metin, out tutar);
+    }
+
+    private static string TutarMetni(decimal tutar) => tutar == 0 ? "" : Fmt.Tutar(tutar);
+
+    // Yazdıkça toplamlar güncellensin diye geçerli girişler anında taslağa aktarılır.
+    private string NakitMetin
+    {
+        get => _nakitMetin;
+        set
+        {
+            _nakitMetin = value;
+            _kirli = true;
+            if (TutarOku(value, out var t)) _state!.Nakit = t;
+        }
+    }
+
+    private string KartMetin
+    {
+        get => _kartMetin;
+        set
+        {
+            _kartMetin = value;
+            _kirli = true;
+            if (TutarOku(value, out var t)) _state!.KrediKarti = t;
+        }
+    }
+    private bool _kirli;
+    private string? _nakitHata;
+    private string? _kartHata;
+    private IReadOnlyList<string> _hatalar = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await GunuYukle(DateOnly.ParseExact(Tarih, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private async Task GunuYukle(DateOnly tarih)
+    {
+        var mevcut = await Days.GetAsync(tarih);
+        _varOlan = mevcut is not null;
+        _state = new DayEditorState(tarih, mevcut);
+        _tarihSecimi = tarih.ToDateTime(TimeOnly.MinValue);
+        _kirli = false;
+        _hatalar = [];
+        _nakitHata = _kartHata = null;
+        _nakitMetin = TutarMetni(_state.Nakit);
+        _kartMetin = TutarMetni(_state.KrediKarti);
+    }
+
+    // Tarih değişince o günün kaydı (varsa) açılır; yazılanlar kaybolacaksa önce sorulur.
+    private async Task TarihDegisti(DateTime? yeni)
+    {
+        if (yeni is null || DateOnly.FromDateTime(yeni.Value) == _state!.Tarih)
+        {
+            return;
+        }
+
+        if (_kirli)
+        {
+            var onay = await Dialogs.ShowMessageBoxAsync(
+                "Kaydedilmemiş değişiklik",
+                "Tarihi değiştirirseniz bu güne yazdıklarınız kaybolacak.",
+                yesText: "Değiştir",
+                cancelText: "Vazgeç");
+            if (onay != true)
+            {
+                StateHasChanged();
+                return;
+            }
+        }
+
+        await GunuYukle(DateOnly.FromDateTime(yeni.Value));
+    }
+
+    // Metin alanlarını taslağa aktarır; geçersiz giriş kullanıcıya gösterilir, sessizce 0 yazılmaz.
+    private bool TutarlariOku()
+    {
+        _nakitHata = _kartHata = null;
+
+        if (TutarOku(_nakitMetin, out var nakit)) _state!.Nakit = nakit;
+        else _nakitHata = "Geçerli bir tutar girin (örn. 12,50).";
+
+        if (TutarOku(_kartMetin, out var kart)) _state!.KrediKarti = kart;
+        else _kartHata = "Geçerli bir tutar girin (örn. 12,50).";
+
+        return _nakitHata is null && _kartHata is null;
+    }
+
+    private async Task HavaleDuzenle()
+    {
+        var parametreler = new DialogParameters<HavaleDialog> { { x => x.State, _state! } };
+        var secenekler = new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = false };
+        var dialog = await Dialogs.ShowAsync<HavaleDialog>($"{TrFormat.Tarih(_state!.Tarih)} Havaleleri", parametreler, secenekler);
+        await dialog.Result;
+        _kirli = true;
+        StateHasChanged();
+    }
+
+    // Kaydedilmemiş değişiklik varken sayfadan (geri tuşu dahil) çıkılırsa onay istenir.
+    private async Task CikisiDenetle(LocationChangingContext context)
+    {
+        if (!_kirli)
+        {
+            return;
+        }
+
+        var onay = await Dialogs.ShowMessageBoxAsync(
+            "Kaydedilmemiş değişiklik",
+            "Bu güne yaptığınız değişiklikler kaydedilmedi. Çıkılırsa kaybolacak.",
+            yesText: "Çık",
+            cancelText: "Kal");
+        if (onay != true)
+        {
+            context.PreventNavigation();
+        }
+    }
+
+    private void Cik()
+    {
+        _kirli = false;
+        var yerel = Don is not null && Don.StartsWith('/') && !Don.StartsWith("//");
+        Nav.NavigateTo(yerel ? Don! : $"/?ay={_state!.Tarih.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture)}");
+    }
+
+    private async Task Kaydet()
+    {
+        if (!TutarlariOku())
+        {
+            return;
+        }
+
+        _hatalar = _state!.Validate();
+        if (_hatalar.Count > 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await Days.SaveAsync(_state.ToDay());
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Kaydedilemedi: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Gün kaydedildi.", Severity.Success);
+        Cik();
+    }
+
+    private void Iptal() => Cik();
+}

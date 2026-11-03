@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CiroApp.Application/CiroApp.Application.csproj" />
+    <Project Path="src/CiroApp.Domain/CiroApp.Domain.csproj" />
+    <Project Path="src/CiroApp.Infrastructure/CiroApp.Infrastructure.csproj" />
+    <Project Path="src/CiroApp/CiroApp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CiroApp.Tests/CiroApp.Tests.csproj" />
+  </Folder>
+</Solution>

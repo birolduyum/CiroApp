@@ -1,0 +1,107 @@
+@inject NavigationManager Nav
+@inject DayService Days
+@inject IDialogService Dialogs
+@inject ISnackbar Snackbar
+
+@* Ana liste ve rapor sorgusu aynı gün listesini gösterir; düzenle/sil davranışı tek yerde. *@
+@if (Gunler.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">@BosMetin</MudAlert>
+}
+else
+{
+    <div class="liste-tablo">
+        <MudTable Items="Gunler" Dense="true" Hover="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Tarih</MudTh>
+                <MudTh Style="text-align:right">Nakit</MudTh>
+                <MudTh Style="text-align:right">Kredi kartı</MudTh>
+                <MudTh Style="text-align:right">Havale</MudTh>
+                <MudTh Style="text-align:right">Günlük Toplam</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@TrFormat.Tarih(context.Tarih)</MudTd>
+                <MudTd Style="text-align:right">@Fmt.Tutar(context.Nakit)</MudTd>
+                <MudTd Style="text-align:right">@Fmt.Tutar(context.KrediKarti)</MudTd>
+                <MudTd Style="text-align:right">@Fmt.Tutar(context.HavaleToplam)</MudTd>
+                <MudTd Style="text-align:right"><b>@Fmt.Tutar(context.GunlukToplam)</b></MudTd>
+                <MudTd Style="text-align:right; white-space:nowrap">
+                    <MudButton Size="Size.Small" OnClick="() => Duzenle(context)">Düzenle</MudButton>
+                    <MudButton Size="Size.Small" Color="Color.Error" OnClick="() => Sil(context)">Sil</MudButton>
+                </MudTd>
+            </RowTemplate>
+            <FooterContent>
+                <MudTd><b>@ToplamEtiketi</b></MudTd>
+                <MudTd Style="text-align:right"><b>@Fmt.Tutar(Gunler.Sum(g => g.Nakit))</b></MudTd>
+                <MudTd Style="text-align:right"><b>@Fmt.Tutar(Gunler.Sum(g => g.KrediKarti))</b></MudTd>
+                <MudTd Style="text-align:right"><b>@Fmt.Tutar(Gunler.Sum(g => g.HavaleToplam))</b></MudTd>
+                <MudTd Style="text-align:right"><b>@Fmt.Tutar(Gunler.Sum(g => g.GunlukToplam))</b></MudTd>
+                <MudTd></MudTd>
+            </FooterContent>
+        </MudTable>
+    </div>
+
+    <div class="liste-kartlar">
+        @foreach (var g in Gunler)
+        {
+            <MudCard Class="mb-2" Elevation="1">
+                <MudCardContent>
+                    <MudText Typo="Typo.subtitle1"><b>@TrFormat.Tarih(g.Tarih)</b></MudText>
+                    <MudText>Nakit: @Fmt.Tutar(g.Nakit)</MudText>
+                    <MudText>Kredi kartı: @Fmt.Tutar(g.KrediKarti)</MudText>
+                    <MudText>Havale: @Fmt.Tutar(g.HavaleToplam)</MudText>
+                    <MudText><b>Günlük Toplam: @Fmt.Tutar(g.GunlukToplam)</b></MudText>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton OnClick="() => Duzenle(g)">Düzenle</MudButton>
+                    <MudButton Color="Color.Error" OnClick="() => Sil(g)">Sil</MudButton>
+                </MudCardActions>
+            </MudCard>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<CiroDay> Gunler { get; set; } = [];
+    [Parameter] public string BosMetin { get; set; } = "Kayıtlı gün yok.";
+    [Parameter] public string ToplamEtiketi { get; set; } = "Toplam";
+
+    /// <summary>Düzenleyiciden dönülecek adres; boşsa düzenlenen günün ayındaki ana liste açılır.</summary>
+    [Parameter] public string? DonusUrl { get; set; }
+
+    /// <summary>Gün silindikten sonra üst sayfanın listeyi yeniden yüklemesi için.</summary>
+    [Parameter] public EventCallback OnSilindi { get; set; }
+
+    private void Duzenle(CiroDay gun)
+    {
+        var url = $"/gun/{gun.Tarih.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}";
+        Nav.NavigateTo(DonusUrl is null ? url : $"{url}?don={Uri.EscapeDataString(DonusUrl)}");
+    }
+
+    private async Task Sil(CiroDay gun)
+    {
+        var onay = await Dialogs.ShowMessageBoxAsync(
+            "Günü sil",
+            $"{TrFormat.Tarih(gun.Tarih)} günü silinecek. Bu günün havale kayıtları da silinecek.",
+            yesText: "Sil",
+            cancelText: "Vazgeç");
+        if (onay != true)
+        {
+            return;
+        }
+
+        try
+        {
+            await Days.DeleteAsync(gun.Tarih);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Silinemedi: {ex.Message}", Severity.Error);
+            return;
+        }
+
+        Snackbar.Add("Gün silindi.", Severity.Success);
+        await OnSilindi.InvokeAsync();
+    }
+}

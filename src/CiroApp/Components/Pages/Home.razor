@@ -1,0 +1,47 @@
+@page "/"
+@inject DayService Days
+@inject NavigationManager Nav
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3" Wrap="Wrap.Wrap" Spacing="2">
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" OnClick="() => AyDegistir(-1)" aria-label="Önceki ay" />
+    <MudText Typo="Typo.h6">@TrFormat.YilAy(DateOnly.FromDateTime(_ay))</MudText>
+    <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" OnClick="() => AyDegistir(1)" aria-label="Sonraki ay" />
+    <MudSpacer />
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="YeniGunEkle">Yeni Gün Ekle</MudButton>
+</MudStack>
+
+<DayList Gunler="_gunler" BosMetin="Bu ayda kayıtlı gün yok." ToplamEtiketi="Ay Toplamı"
+         DonusUrl="@DonusUrl" OnSilindi="Yukle" />
+
+@code {
+    // Açılışta içinde bulunulan yıl ve ay gösterilir.
+    private DateTime _ay = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private IReadOnlyList<CiroDay> _gunler = [];
+
+    private string DonusUrl => $"/?ay={_ay.ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture)}";
+
+    // Düzenleyiciden dönüşte düzenlenen günün ayı açılsın (?ay=yyyy-MM).
+    [SupplyParameterFromQuery(Name = "ay")] public string? Ay { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Ay is not null
+            && DateTime.TryParseExact(Ay, "yyyy-MM", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var ay))
+        {
+            _ay = ay;
+        }
+
+        await Yukle();
+    }
+
+    private async Task Yukle() => _gunler = await Days.GetMonthAsync(_ay.Year, _ay.Month);
+
+    private async Task AyDegistir(int fark)
+    {
+        _ay = _ay.AddMonths(fark);
+        await Yukle();
+    }
+
+    // Editör bugünün tarihiyle açılır; tarihi orada seçilir. O güne kayıt varsa düzenleme olarak açılır, ikinci kayıt oluşmaz.
+    private void YeniGunEkle() => Nav.NavigateTo($"/gun/{DateTime.Today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}");
+}

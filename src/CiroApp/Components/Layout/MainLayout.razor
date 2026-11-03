@@ -1,0 +1,53 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject NavigationManager Nav
+
+<MudThemeProvider />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Primary">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="() => _menuAcik = !_menuAcik" aria-label="Menü" />
+        <MudText Typo="Typo.h6">Ciro</MudText>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_menuAcik" Variant="DrawerVariant.Temporary" Elevation="2">
+        <MudDrawerHeader>
+            <MudText Typo="Typo.h6">Ciro</MudText>
+        </MudDrawerHeader>
+        <MudNavMenu>
+            <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.ViewList">Ana Liste</MudNavLink>
+            <MudNavLink Href="/rapor" Icon="@Icons.Material.Filled.Assessment">Rapor</MudNavLink>
+            <MudNavLink Href="/yedek" Icon="@Icons.Material.Filled.Backup">Yedek</MudNavLink>
+            <MudNavLink Href="/ayarlar" Icon="@Icons.Material.Filled.Settings">Ayarlar</MudNavLink>
+        </MudNavMenu>
+    </MudDrawer>
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Large" Class="my-4">
+            <ErrorBoundary>
+                <ChildContent>@Body</ChildContent>
+                <ErrorContent Context="ex">
+                    <MudAlert Severity="Severity.Error">Beklenmeyen bir hata oluştu: @ex.Message</MudAlert>
+                    <MudButton Href="/" Class="mt-2">Ana listeye dön</MudButton>
+                </ErrorContent>
+            </ErrorBoundary>
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _menuAcik;
+
+    protected override void OnInitialized() => Nav.LocationChanged += SayfaDegisti;
+
+    // Bir menü öğesine basılınca sayfa değişir; çekmece kendiliğinden kapansın.
+    private void SayfaDegisti(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _menuAcik = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= SayfaDegisti;
+}

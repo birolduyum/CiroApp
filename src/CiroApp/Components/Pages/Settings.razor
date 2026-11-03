@@ -1,0 +1,134 @@
+@page "/ayarlar"
+@inject EmailSettingsService EmailSettings
+@inject RecipientService Recipients
+@inject ISnackbar Snackbar
+
+<MudText Typo="Typo.h5" Class="mb-3">Ayarlar</MudText>
+
+<MudPaper Class="pa-4 mb-4" Elevation="1" Style="max-width: 32rem">
+    <MudStack Spacing="3">
+        <MudText Typo="Typo.h6">E-posta hesabı</MudText>
+        <MudSelect T="string" Label="Sağlayıcı" Value="_saglayici" ValueChanged="SaglayiciDegisti">
+            @foreach (var p in SmtpPresets.Providers)
+            {
+                <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField T="string" Label="E-posta adresi" @bind-Value="_email" />
+        <MudTextField T="string" Label="Parola" @bind-Value="_parola"
+                      InputType="@(_parolaGorunur ? InputType.Text : InputType.Password)"
+                      Adornment="Adornment.End"
+                      AdornmentIcon="@(_parolaGorunur ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                      OnAdornmentClick="() => _parolaGorunur = !_parolaGorunur"
+                      AdornmentAriaLabel="@(_parolaGorunur ? "Parolayı gizle" : "Parolayı göster")" />
+        <MudTextField T="string" Label="Sunucu" @bind-Value="_host" Disabled="@(_saglayici != "Diğer")" />
+        <MudNumericField T="int" Label="Port" @bind-Value="_port" Disabled="@(_saglayici != "Diğer")" />
+        <MudCheckBox T="bool" Label="SSL ile bağlan" @bind-Value="_ssl" Disabled="@(_saglayici != "Diğer")" />
+
+        <MudCheckBox T="bool" Label="Sertifika iptal denetimini atla" @bind-Value="_iptalAtla" />
+        <MudText Typo="Typo.caption">Yalnızca "Chain_RevocationStatusUnknown" gibi bir sertifika hatası alırsanız işaretleyin (bazı Android cihazlarda gerekir). Sertifika zinciri ve sunucu adı yine doğrulanır.</MudText>
+
+        <MudAlert Severity="Severity.Info" Dense="true">
+            Gmail için normal hesap parolası çalışmaz. Google hesabınızda 2 adımlı doğrulamayı açıp
+            "uygulama parolası" oluşturun ve parola alanına onu yazın. Outlook hesabı parolayla girişe
+            izin vermiyorsa test e-postası hata verir.
+        </MudAlert>
+
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Kaydet">Kaydet</MudButton>
+            <MudButton Variant="Variant.Outlined" Disabled="_mesgul" OnClick="TestGonder">Test e-postası gönder</MudButton>
+        </MudStack>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Class="pa-4" Elevation="1" Style="max-width: 32rem">
+    <MudText Typo="Typo.h6" Class="mb-2">Kayıtlı alıcılar</MudText>
+    @if (_alicilar.Count == 0)
+    {
+        <MudText Typo="Typo.body2">Kayıtlı alıcı yok. Rapor gönderdiğinizde adresler buraya eklenir.</MudText>
+    }
+    @foreach (var a in _alicilar)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+            <MudText>@a</MudText>
+            <MudButton Size="Size.Small" Color="Color.Error" OnClick="() => AliciSil(a)">Sil</MudButton>
+        </MudStack>
+    }
+</MudPaper>
+
+@code {
+    private string _saglayici = "Gmail";
+    private string _email = "";
+    private string _parola = "";
+    private string _host = "smtp.gmail.com";
+    private int _port = 465;
+    private bool _ssl = true;
+    private bool _mesgul;
+    private bool _parolaGorunur;
+    private bool _iptalAtla;
+    private IReadOnlyList<string> _alicilar = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var kayitli = await EmailSettings.LoadAsync();
+        if (kayitli is not null)
+        {
+            (_saglayici, _host, _port, _ssl, _email, _parola, _iptalAtla) =
+                (kayitli.Provider, kayitli.Host, kayitli.Port, kayitli.UseSsl, kayitli.Email, kayitli.Password, kayitli.SkipRevocationCheck);
+        }
+
+        _alicilar = await Recipients.GetAllAsync();
+    }
+
+    private void SaglayiciDegisti(string saglayici)
+    {
+        _saglayici = saglayici;
+        var onayar = SmtpPresets.For(saglayici, _email, _parola);
+        (_host, _port, _ssl) = (onayar.Host, onayar.Port, onayar.UseSsl);
+    }
+
+    private SmtpSettings Mevcut() => new(_saglayici, _host.Trim(), _port, _ssl, _email.Trim(), _parola, _iptalAtla);
+
+    private async Task Kaydet()
+    {
+        var hata = await EmailSettings.SaveAsync(Mevcut());
+        if (hata is not null)
+        {
+            Snackbar.Add(hata, Severity.Warning);
+            return;
+        }
+
+        Snackbar.Add("Ayarlar kaydedildi.", Severity.Success);
+    }
+
+    private async Task TestGonder()
+    {
+        _mesgul = true;
+        try
+        {
+            // Rapor gönderimi kayıtlı ayarları kullanır; test de aynısını denesin diye önce kaydedilir.
+            var hata = await EmailSettings.SaveAsync(Mevcut()) ?? await EmailSettings.SendTestAsync(Mevcut());
+            if (hata is not null)
+            {
+                Snackbar.Add(hata, Severity.Warning);
+                return;
+            }
+
+            Snackbar.Add("Ayarlar kaydedildi ve test e-postası gönderildi.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(ex is EmailSendException ? ex.Message : $"Test e-postası gönderilemedi: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _mesgul = false;
+        }
+    }
+
+    private async Task AliciSil(string adres)
+    {
+        await Recipients.RemoveAsync(adres);
+        _alicilar = await Recipients.GetAllAsync();
+    }
+}

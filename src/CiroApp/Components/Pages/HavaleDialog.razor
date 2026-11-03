@@ -1,0 +1,113 @@
+<MudDialog>
+    <DialogContent>
+        <MudStack Spacing="2">
+            @for (var i = 0; i < _satirlar.Count; i++)
+            {
+                var satir = _satirlar[i];
+                <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                    <MudTextField T="string" Label="Tutar" @bind-Value="satir.TutarMetin" Immediate="true"
+                                  Error="@(satir.Hata is not null)" ErrorText="@satir.Hata"
+                                  InputMode="@(MudBlazor.InputMode.@decimal)" Style="max-width: 9rem" />
+                    <MudTextField T="string" Label="Kişi adı" @bind-Value="satir.KisiAdi" Immediate="true" />
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" aria-label="Havaleyi sil"
+                                   OnClick="() => Sil(satir)" />
+                </MudStack>
+            }
+
+            <MudButton StartIcon="@Icons.Material.Filled.Add" OnClick="Ekle">Havale Ekle</MudButton>
+            <MudDivider />
+            <MudText>Havale toplamı: <b>@Fmt.Tutar(Toplam())</b> TL</MudText>
+            @foreach (var hata in _hatalar)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true">@hata</MudAlert>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Vazgec">Vazgeç</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Tamam">Tamam</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public DayEditorState State { get; set; } = default!;
+
+    private sealed class Satir
+    {
+        public string TutarMetin { get; set; } = "";
+        public string KisiAdi { get; set; } = "";
+        public string? Hata { get; set; }
+    }
+
+    private readonly List<Satir> _satirlar = [];
+    private IReadOnlyList<string> _hatalar = [];
+
+    protected override void OnInitialized()
+    {
+        foreach (var h in State.Havaleler)
+        {
+            _satirlar.Add(new Satir { TutarMetin = Fmt.Tutar(h.Tutar), KisiAdi = h.KisiAdi });
+        }
+
+        if (_satirlar.Count == 0)
+        {
+            _satirlar.Add(new Satir());
+        }
+    }
+
+    private void Ekle() => _satirlar.Add(new Satir());
+
+    private void Sil(Satir satir) => _satirlar.Remove(satir);
+
+    private decimal Toplam() =>
+        _satirlar.Sum(s => TrFormat.TryParseTutar(s.TutarMetin, out var t) ? t : 0);
+
+    private void Tamam()
+    {
+        var hataVar = false;
+        var okunan = new List<(decimal Tutar, string Ad, int Sira)>();
+        foreach (var s in _satirlar)
+        {
+            s.Hata = null;
+            var bos = string.IsNullOrWhiteSpace(s.TutarMetin) && string.IsNullOrWhiteSpace(s.KisiAdi);
+            if (bos)
+            {
+                continue;   // boş bırakılan satır kaydedilmez
+            }
+
+            if (!TrFormat.TryParseTutar(s.TutarMetin, out var tutar))
+            {
+                s.Hata = "Geçerli bir tutar girin (örn. 12,50).";
+                hataVar = true;
+                continue;
+            }
+
+            okunan.Add((tutar, s.KisiAdi, _satirlar.IndexOf(s) + 1));
+        }
+
+        // Taslağa dokunmadan önce doğrula: hatada "Vazgeç" taslağı bozulmamış bırakır.
+        _hatalar = okunan
+            .Where(o => string.IsNullOrWhiteSpace(o.Ad))
+            .Select(o => $"{o.Sira}. satır için kişi adı girilmelidir.")
+            .ToList();
+        if (hataVar || _hatalar.Count > 0)
+        {
+            return;
+        }
+
+        for (var i = State.Havaleler.Count - 1; i >= 0; i--)
+        {
+            State.RemoveHavale(i);
+        }
+
+        foreach (var (tutar, ad, _) in okunan)
+        {
+            State.AddHavale(tutar, ad);
+        }
+
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Vazgec() => MudDialog.Cancel();
+}
